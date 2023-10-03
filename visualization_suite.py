@@ -35,7 +35,7 @@ def map_points_to_colors(points_array):
         np.max(distances) - np.min(distances)
     )
 
-    colormap = plt.get_cmap("viridis")
+    colormap = plt.get_cmap("YlOrBr")
     return (colormap(normalized_distances)[:, :3] * 255).astype(np.uint8)
 
 
@@ -65,7 +65,7 @@ class PointCloudVisualization:
     @staticmethod
     def _setup_actor(polydata):
         sphere = vtk.vtkSphereSource()
-        sphere.SetRadius(0.5)
+        sphere.SetRadius(0.2)
 
         glyph3D = vtk.vtkGlyph3D()
         glyph3D.SetSourceConnection(sphere.GetOutputPort())
@@ -211,7 +211,7 @@ class MainWindow(QMainWindow):
     def _configure_renderer_perspective():
         renderer = vtk.vtkRenderer()
         renderer.SetViewport(0.0, 0.0, 1.0, 1.0)
-        renderer.GetActiveCamera().SetPosition(0, 0, 500)
+        renderer.GetActiveCamera().SetPosition(0, 0, 200)
         renderer.GetActiveCamera().SetFocalPoint(0, 0, 0)
         renderer.GetActiveCamera().SetViewUp(0, 1, 0)
         return renderer
@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
     def _configure_renderer_overhead():
         renderer = vtk.vtkRenderer()
         renderer.SetViewport(0.0, 0.0, 1.0, 1.0)
-        distance_from_center = 500
+        distance_from_center = 200
         angle = 45  # degrees
         height = distance_from_center * np.tan(np.radians(90 - angle))
         renderer.GetActiveCamera().SetPosition(0, -height, distance_from_center)

@@ -64,22 +64,20 @@ class PointCloudVisualization:
 
     @staticmethod
     def _setup_actor(polydata):
-        sphere = vtk.vtkSphereSource()
-        sphere.SetRadius(0.2)
-
-        glyph3D = vtk.vtkGlyph3D()
-        glyph3D.SetSourceConnection(sphere.GetOutputPort())
-        glyph3D.SetInputData(polydata)
-        glyph3D.ScalingOff()
-        glyph3D.SetColorModeToColorByScalar()  # Ensure coloring by scalar values
-        glyph3D.Update()
+        # Use the vtkVertexGlyphFilter to represent the data points as simple points.
+        glyph_filter = vtk.vtkVertexGlyphFilter()
+        glyph_filter.SetInputData(polydata)
+        glyph_filter.Update()
 
         mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(glyph3D.GetOutputPort())
+        mapper.SetInputConnection(glyph_filter.GetOutputPort())
         mapper.SetScalarModeToUsePointData()
 
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
+
+        # Adjust the point size
+        actor.GetProperty().SetPointSize(3)
         return actor
 
 
