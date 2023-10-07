@@ -67,7 +67,7 @@ class PointCloudVisualization:
     def _setup_actor(polydata):
         # Use the vtkVertexGlyphFilter to represent the data points as simple points.
         glyph_filter = vtk.vtkVertexGlyphFilter()
-        glyph_filter.SetInputDataz(polydata)
+        glyph_filter.SetInputData(polydata)
         glyph_filter.Update()
 
         mapper = vtk.vtkPolyDataMapper()
@@ -85,6 +85,7 @@ class PointCloudVisualization:
         """Shift the point cloud by given amounts in x, y, and z directions."""
         self.transform.Translate(x_shift, y_shift, z_shift)
         self.actor.SetUserTransform(self.transform)
+
 
 
 class CameraView(QWidget):
@@ -148,26 +149,23 @@ class MainWindow(QMainWindow):
     """Main application window."""
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self._setup_ui()
-        self.resize(800, 600)
-        self.show()
+            super().__init__(parent)
+            self._setup_ui()
+            self.resize(800, 600)
+            self.show()
 
-        # Store references to the VTK render windows
-        self.render_windows = [
-            self.vtkWidget1.GetRenderWindow(),
-            self.vtkWidget2.GetRenderWindow(),
-        ]
+            # Store references to the VTK render windows
+            self.render_windows = [self.vtkWidget1.GetRenderWindow(), self.vtkWidget2.GetRenderWindow()]
 
-        # Set up a QTimer to update the point cloud's position
-        self.update_timer = QTimer(self)
-        self.update_timer.timeout.connect(self.update_point_cloud)
-        self.update_timer.start(100)  # Update every 100ms
+            # Set up a QTimer to update the point cloud's position
+            self.update_timer = QTimer(self)
+            self.update_timer.timeout.connect(self.update_point_cloud)
+            self.update_timer.start(100)  # Update every 100ms
 
     def update_point_cloud(self):
         """Update the position of the point cloud."""
         visualization.shift_point_cloud()
-
+        
         # Refresh the VTK render windows
         for render_window in self.render_windows:
             render_window.Render()
