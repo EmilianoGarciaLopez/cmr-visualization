@@ -61,12 +61,13 @@ class PointCloudVisualization:
 
     def __init__(self, polydata):
         self.actor = self._setup_actor(polydata)
+        self.transform = vtk.vtkTransform()
 
     @staticmethod
     def _setup_actor(polydata):
         # Use the vtkVertexGlyphFilter to represent the data points as simple points.
         glyph_filter = vtk.vtkVertexGlyphFilter()
-        glyph_filter.SetInputData(polydata)
+        glyph_filter.SetInputDataz(polydata)
         glyph_filter.Update()
 
         mapper = vtk.vtkPolyDataMapper()
@@ -79,6 +80,11 @@ class PointCloudVisualization:
         # Adjust the point size
         actor.GetProperty().SetPointSize(3)
         return actor
+
+    def shift_point_cloud(self, x_shift=1.0, y_shift=1.0, z_shift=1.0):
+        """Shift the point cloud by given amounts in x, y, and z directions."""
+        self.transform.Translate(x_shift, y_shift, z_shift)
+        self.actor.SetUserTransform(self.transform)
 
 
 class CameraView(QWidget):
@@ -146,6 +152,25 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self.resize(800, 600)
         self.show()
+
+        # Store references to the VTK render windows
+        self.render_windows = [
+            self.vtkWidget1.GetRenderWindow(),
+            self.vtkWidget2.GetRenderWindow(),
+        ]
+
+        # Set up a QTimer to update the point cloud's position
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.update_point_cloud)
+        self.update_timer.start(100)  # Update every 100ms
+
+    def update_point_cloud(self):
+        """Update the position of the point cloud."""
+        visualization.shift_point_cloud()
+
+        # Refresh the VTK render windows
+        for render_window in self.render_windows:
+            render_window.Render()
 
     def _setup_ui(self):
         self.frame = QWidget()

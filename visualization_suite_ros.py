@@ -16,7 +16,12 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sensor_msgs import Image, PointCloud2
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+
+IMAGE_LEFT_TOPIC = "/zedsdk_left_color_image"
+IMAGE_RIGHT_TOPIC = "/zedsdk_right_color_image"
+POINT_CLOUD_TOPIC = "/zedsdk_point_cloud_image"
 
 
 def load_and_transform_points(file_path):
@@ -54,6 +59,39 @@ def create_point_cloud(points_array, colors_array):
     polydata.SetPoints(points)
     polydata.GetPointData().SetScalars(colors)
     return polydata
+
+
+class CameraViewSubscriber(CameraView):
+    def __init__(self, topic_name):
+        super().__init__(-1)  # We are not using a real camera index here
+        self.subscription = self.create_subscription(
+            Image, topic_name, self.update_frame_from_topic, BEST_EFFORT_QOS_PROFILE
+        )
+
+    def update_frame_from_topic(self, msg):
+        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
+        self.update_frame(frame)
+
+
+class PointCloudSubscriber(Node):
+    def __init__(self):
+        super().__init__("point_cloud_visualizer")
+
+        self.subscription = self.create_subscription(
+            PointCloud2,
+            POINT_CLOUD_TOPIC,
+            self.point_cloud_callback,
+            BEST_EFFORT_QOS_PROFILE,
+        )
+
+    def point_cloud_callback(self, msg):
+        point_cloud_data = self.bridge.imgmsg_to_cv2(msg, desired_encoding="32FC4")
+        # logic to transform and visualize the point cloud goes here
+        points_array = np.array(point_cloud_data[:, :3])
+        colors_array = map_points_to_colors(points_array)
+        polydata = create_point_cloud(points_array, colors_array)
+        visualization = PointCloudVisualization(polydata)
+        # Note: might need to update your visualization components here
 
 
 class PointCloudVisualization:
@@ -163,8 +201,8 @@ class MainWindow(QMainWindow):
         self.vtkWidget2 = self._create_vtk_widget(self.frame, renderer2)
 
         # Camera views
-        self.cameraView1 = CameraView(1)
-        self.cameraView2 = CameraView(1)
+        self.cameraView1 = CameraViewSubscriber(IMAGE_LEFT_TOPIC)
+        self.cameraView2 = CameraViewSubscriber(IMAGE_RIGHT_TOPIC)
 
         # Organize the two camera views side-by-side in top_splitter
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -228,12 +266,14 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
-    points_array = load_and_transform_points("pointcloud.npy")
-    colors_array = map_points_to_colors(points_array)
-    polydata = create_point_cloud(points_array, colors_array)
-
-    visualization = PointCloudVisualization(polydata)
-
+    rclpy.init()
     app = QApplication(sys.argv)
+
+    point_cloud_subscriber = PointCloudSubscriber()  # Initialize point cloud subscriber
+
     window = MainWindow()
     sys.exit(app.exec())
+
+    rclpy.spin(point_cloud_subscriber)
+    point_cloud_subscriber.destroy_node()
+    rclpy.shutdown()

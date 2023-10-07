@@ -16,7 +16,12 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sensor_msgs import Image, PointCloud2
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+
+IMAGE_LEFT_TOPIC = "/zedsdk_left_color_image"
+IMAGE_RIGHT_TOPIC = "/zedsdk_right_color_image"
+POINT_CLOUD_TOPIC = "/zedsdk_point_cloud_image"
 
 
 def load_and_transform_points(file_path):
@@ -56,6 +61,38 @@ def create_point_cloud(points_array, colors_array):
     return polydata
 
 
+class CameraViewSubscriber(CameraView):
+    def __init__(self, topic_name):
+        super().__init__(-1)  # We are not using a real camera index here
+        self.subscription = self.create_subscription(
+            Image, topic_name, self.update_frame_from_topic, BEST_EFFORT_QOS_PROFILE
+        )
+
+    def update_frame_from_topic(self, msg):
+        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
+        self.update_frame(frame)
+
+
+class PointCloudSubscriber(Node):
+    def __init__(self):
+        super().__init__("point_cloud_visualizer")
+        self.latest_polydata = None  # Add this line to store the latest polydata
+        self.subscription = self.create_subscription(
+            PointCloud2,
+            POINT_CLOUD_TOPIC,
+            self.point_cloud_callback,
+            BEST_EFFORT_QOS_PROFILE,
+        )
+
+    def point_cloud_callback(self, msg):
+        point_cloud_data = self.bridge.imgmsg_to_cv2(msg, desired_encoding="32FC4")
+        points_array = np.array(point_cloud_data[:, :3])
+        colors_array = map_points_to_colors(points_array)
+        self.latest_polydata = create_point_cloud(
+            points_array, colors_array
+        )  # Update the polydata here
+
+
 class PointCloudVisualization:
     """A class responsible for setting up the VTK visualization of the point cloud."""
 
@@ -64,22 +101,20 @@ class PointCloudVisualization:
 
     @staticmethod
     def _setup_actor(polydata):
-        sphere = vtk.vtkSphereSource()
-        sphere.SetRadius(0.2)
-
-        glyph3D = vtk.vtkGlyph3D()
-        glyph3D.SetSourceConnection(sphere.GetOutputPort())
-        glyph3D.SetInputData(polydata)
-        glyph3D.ScalingOff()
-        glyph3D.SetColorModeToColorByScalar()  # Ensure coloring by scalar values
-        glyph3D.Update()
+        # Use the vtkVertexGlyphFilter to represent the data points as simple points.
+        glyph_filter = vtk.vtkVertexGlyphFilter()
+        glyph_filter.SetInputData(polydata)
+        glyph_filter.Update()
 
         mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(glyph3D.GetOutputPort())
+        mapper.SetInputConnection(glyph_filter.GetOutputPort())
         mapper.SetScalarModeToUsePointData()
 
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
+
+        # Adjust the point size
+        actor.GetProperty().SetPointSize(3)
         return actor
 
 
@@ -122,7 +157,7 @@ class CameraView(QWidget):
         self.label.setPixmap(QPixmap.fromImage(image))
 
     def convert_to_qimage(self, frame):
-        height, width, channel = frame.shape
+        height, width, _ = frame.shape
         bytesPerLine = 3 * width
         return QImage(
             frame.data, width, height, bytesPerLine, QImage.Format.Format_RGB888
@@ -130,7 +165,7 @@ class CameraView(QWidget):
 
     def convert_frame(self, frame):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        height, width, channel = frame.shape
+        height, width, _ = frame.shape
         bytesPerLine = 3 * width
         return QImage(
             frame.data, width, height, bytesPerLine, QImage.Format.Format_RGB888
@@ -143,11 +178,17 @@ class CameraView(QWidget):
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    def __init__(self, parent=None):
+    def __init__(self, subscriber: PointCloudSubscriber, parent=None):
         super().__init__(parent)
+        self.subscriber = subscriber
         self._setup_ui()
         self.resize(800, 600)
         self.show()
+
+        # Set up a QTimer to refresh the visualization every 50ms
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.refresh_vtk_view)
+        self.refresh_timer.start(50)
 
     def _setup_ui(self):
         self.frame = QWidget()
@@ -165,8 +206,8 @@ class MainWindow(QMainWindow):
         self.vtkWidget2 = self._create_vtk_widget(self.frame, renderer2)
 
         # Camera views
-        self.cameraView1 = CameraView(1)
-        self.cameraView2 = CameraView(1)
+        self.cameraView1 = CameraViewSubscriber(IMAGE_LEFT_TOPIC)
+        self.cameraView2 = CameraViewSubscriber(IMAGE_RIGHT_TOPIC)
 
         # Organize the two camera views side-by-side in top_splitter
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -197,6 +238,11 @@ class MainWindow(QMainWindow):
         self.frame.setLayout(self.hl)
         self.setCentralWidget(self.frame)
 
+        # refreshing of the frame
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.refresh_vtk_view)
+        self.refresh_timer.start(50)  # Refresh every 50ms
+
     def _create_vtk_widget(self, parent, renderer):
         vtk_widget = QVTKRenderWindowInteractor(parent)
         vtk_widget.setSizePolicy(
@@ -206,6 +252,27 @@ class MainWindow(QMainWindow):
         vtk_widget.GetRenderWindow().Render()
         vtk_widget.Start()
         return vtk_widget
+
+    def refresh_vtk_view(self):
+        if not point_cloud_subscriber.latest_polydata:
+            return
+
+        # Remove existing actors from the renderers
+        self.vtkWidget1.GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveAllViewProps()
+        self.vtkWidget2.GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveAllViewProps()
+
+        # Create and add the new actor
+        visualization = PointCloudVisualization(point_cloud_subscriber.latest_polydata)
+        self.vtkWidget1.GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(
+            visualization.actor
+        )
+        self.vtkWidget2.GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(
+            visualization.actor
+        )
+
+        # Render the updates
+        self.vtkWidget1.GetRenderWindow().Render()
+        self.vtkWidget2.GetRenderWindow().Render()
 
     @staticmethod
     def _configure_renderer_perspective():
@@ -230,12 +297,14 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
-    points_array = load_and_transform_points("pointcloud.npy")
-    colors_array = map_points_to_colors(points_array)
-    polydata = create_point_cloud(points_array, colors_array)
-
-    visualization = PointCloudVisualization(polydata)
-
+    rclpy.init()
     app = QApplication(sys.argv)
-    window = MainWindow()
+
+    point_cloud_subscriber = PointCloudSubscriber()  # Initialize point cloud subscriber
+
+    window = MainWindow(point_cloud_subscriber)
     sys.exit(app.exec())
+
+    rclpy.spin(point_cloud_subscriber)
+    point_cloud_subscriber.destroy_node()
+    rclpy.shutdown()
